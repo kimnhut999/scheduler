@@ -3629,8 +3629,7 @@ function ClassForm({ cls, teachers, rooms, onSave, onClose, settings }) {
         const centre = draft.centre || "";
         const day = s.day || "";
         return teacherOptions.filter(t => {
-            if (day && t.dayOff === day)
-                return false;
+            
             if (centre && !teacherCanTravel(t, centre))
                 return false;
             if (draft.subject && !teacherMatchesSubject(t, draft.subject))

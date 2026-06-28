@@ -1787,24 +1787,24 @@ select:has(option[value=""]:checked){
   text-align:center !important;
 }
 .b-director{
-  background:#fff7ed !important;
-  color:#9a3412 !important;
+  background:#f8e8ef !important;
+  color:#8B1E3F !important;
 }
 .b-head{
-  background:#f5f3ff !important;
-  color:#5b21b6 !important;
+  background:#f8e8ef !important;
+  color:#8B1E3F !important;
 }
 .b-master{
-  background:#e0f2fe !important;
-  color:#075985 !important;
+  background:#f3e8ff !important;
+  color:#7C3AED !important;
 }
 .b-fulltime{
-  background:#ecfdf5 !important;
-  color:#047857 !important;
+  background:#dcfce7 !important;
+  color:#16A34A !important;
 }
 .b-parttime{
-  background:#f1f5f9 !important;
-  color:#475569 !important;
+  background:#dbeafe !important;
+  color:#1E3A8A !important;
 }
 .brand-text{
   font-weight:700 !important;
@@ -2028,12 +2028,12 @@ body, input, select, textarea, button{
   margin-top:7px !important;
 }
 .b-vip{
-  background:#fee2e2 !important;
-  color:#991b1b !important;
+  background:#f3e8ff !important;
+  color:#7e22ce !important;
 }
 .b-group{
-  background:#dbeafe !important;
-  color:#1d4ed8 !important;
+  background:#e0f2fe !important;
+  color:#0369a1 !important;
 }
 @media (max-width:760px){
   .modal .schedule-strip{
@@ -3898,13 +3898,27 @@ function compactRequestTitle(req, kind) {
         return `${req.centre || "?"} · ${req.subject || "?"}`;
     return `${req.type || "Cover"} · ${req.subject || "Any subject"}`;
 }
-function updateClassRequestsAfterAssignment(requests, requestId, sessions, teacherName) {
+function classRequestMatchesIdentity(req, idx, identity = {}) {
+    if (!req)
+        return false;
+    const requestToken = identity.requestToken || null;
+    const requestId = identity.requestId || null;
+    const requestIndex = Number.isInteger(identity.requestIndex) ? identity.requestIndex : null;
+    if (Number.isInteger(requestIndex))
+        return idx === requestIndex && (!requestId || req.id === requestId) && (!requestToken || req.requestToken === requestToken);
+    if (requestToken)
+        return req.requestToken === requestToken;
+    return !!requestId && req.id === requestId;
+}
+function updateClassRequestsAfterAssignment(requests, requestId, sessions, teacherName, requestIndex = null, requestToken = null) {
     const rows = (sessions || []).filter(s => s.day);
-    if (!requestId || !rows.length)
+    if ((!requestId && !requestToken && !Number.isInteger(requestIndex)) || !rows.length)
         return requests || [];
-    return (requests || []).map(req => {
-        if (req.id !== requestId)
+    let updated = false;
+    return (requests || []).map((req, idx) => {
+        if (updated || !classRequestMatchesIdentity(req, idx, { requestId, requestIndex, requestToken }))
             return req;
+        updated = true;
         const assigned = { ...requestAssignedMap(req) };
         rows.forEach(s => {
             const hasExplicitTeacherName = Object.prototype.hasOwnProperty.call(s || {}, "teacherName");
@@ -3930,16 +3944,20 @@ function classSessionTeacherName(session, cls, teachers) {
 }
 function updateClassRequestsAfterClassSave(requests, previousClass, nextClass, teachers) {
     const requestId = nextClass && nextClass.sourceRequestId;
-    if (!requestId)
+    const requestToken = nextClass && nextClass.sourceRequestToken;
+    const requestIndex = Number.isInteger(nextClass && nextClass.sourceRequestIndex) ? nextClass.sourceRequestIndex : null;
+    if (!requestId && !requestToken && !Number.isInteger(requestIndex))
         return requests || [];
     const previousDays = getClassSessions(previousClass || {}).map(s => s.day).filter(Boolean);
     const nextSessions = getClassSessions(nextClass || {}).filter(s => s.day);
     const affectedDays = Array.from(new Set([...previousDays, ...nextSessions.map(s => s.day)]));
     if (!affectedDays.length)
         return requests || [];
-    return (requests || []).map(req => {
-        if (req.id !== requestId)
+    let updated = false;
+    return (requests || []).map((req, idx) => {
+        if (updated || !classRequestMatchesIdentity(req, idx, { requestId, requestIndex, requestToken }))
             return req;
+        updated = true;
         const assigned = { ...requestAssignedMap(req) };
         affectedDays.forEach(day => { delete assigned[day]; });
         nextSessions.forEach(s => {
@@ -3952,14 +3970,18 @@ function updateClassRequestsAfterClassSave(requests, previousClass, nextClass, t
 }
 function updateClassRequestsAfterClassDelete(requests, removedClass) {
     const requestId = removedClass && removedClass.sourceRequestId;
-    if (!requestId)
+    const requestToken = removedClass && removedClass.sourceRequestToken;
+    const requestIndex = Number.isInteger(removedClass && removedClass.sourceRequestIndex) ? removedClass.sourceRequestIndex : null;
+    if (!requestId && !requestToken && !Number.isInteger(requestIndex))
         return requests || [];
     const affectedDays = Array.from(new Set(getClassSessions(removedClass || {}).map(s => s.day).filter(Boolean)));
     if (!affectedDays.length)
         return requests || [];
-    return (requests || []).map(req => {
-        if (req.id !== requestId)
+    let updated = false;
+    return (requests || []).map((req, idx) => {
+        if (updated || !classRequestMatchesIdentity(req, idx, { requestId, requestIndex, requestToken }))
             return req;
+        updated = true;
         const assigned = { ...requestAssignedMap(req) };
         affectedDays.forEach(day => { delete assigned[day]; });
         return { ...req, assignedTeachers: assigned };
@@ -3988,16 +4010,43 @@ function rebuildClassRequestAssignmentsFromClasses(db, targetRequestId = null) {
 function classRequestsChanged(a, b) {
     return JSON.stringify((a || []).map(r => ({ id: r.id, assignedTeachers: r.assignedTeachers || {} }))) !== JSON.stringify((b || []).map(r => ({ id: r.id, assignedTeachers: r.assignedTeachers || {} })));
 }
-function existingClassesForClassRequest(db, requestId) {
-    if (!requestId)
+function existingClassesForClassRequest(db, requestId, requestIndex = null, requestToken = null) {
+    if (!requestId && !requestToken && !Number.isInteger(requestIndex))
         return [];
-    return ((db && db.classes) || []).filter(cls => cls && cls.sourceRequestId === requestId);
+    return ((db && db.classes) || []).filter((cls) => {
+        if (!cls)
+            return false;
+        if (Number.isInteger(requestIndex))
+            return cls.sourceRequestIndex === requestIndex && (!requestId || cls.sourceRequestId === requestId) && (!requestToken || cls.sourceRequestToken === requestToken);
+        if (requestToken)
+            return cls.sourceRequestToken === requestToken;
+        return cls.sourceRequestId === requestId;
+    });
 }
-function findPrimaryClassForClassRequest(db, requestId) {
-    const classes = existingClassesForClassRequest(db, requestId);
+function findPrimaryClassForClassRequest(db, requestId, requestIndex = null, requestToken = null) {
+    const classes = existingClassesForClassRequest(db, requestId, requestIndex, requestToken);
     if (!classes.length)
         return null;
     return classes.find(cls => String(cls.status || "") === "Active") || classes[0];
+}
+function findClassRequestByIdentity(db, requestId, requestIndex = null, requestToken = null) {
+    if (!requestId && !requestToken && !Number.isInteger(requestIndex))
+        return null;
+    return ((db && db.classRequests) || []).find((req, idx) => classRequestMatchesIdentity(req, idx, { requestId, requestIndex, requestToken })) || null;
+}
+function mergeRequestPlaceholderSessions(existingSessions, assignedSessions, requestDaysList) {
+    const existingByDay = new Map((existingSessions || []).filter(s => s && s.day).map(s => [s.day, s]));
+    const assignedByDay = new Map((assignedSessions || []).filter(s => s && s.day).map(s => [s.day, s]));
+    const orderedDays = Array.from(new Set([...(requestDaysList || []), ...Array.from(existingByDay.keys()), ...Array.from(assignedByDay.keys())]));
+    return orderedDays.map(day => {
+        const assigned = assignedByDay.get(day);
+        if (assigned)
+            return { ...assigned, id: assigned.id || uid("session") };
+        const existing = existingByDay.get(day);
+        if (existing)
+            return { ...existing, id: existing.id || uid("session"), teacherId: existing.teacherId || "" };
+        return { id: uid("session"), day, timeFrom: "", timeTo: "", room: "", teacherId: "" };
+    });
 }
 function mergeClassSessions(existingSessions, incomingSessions) {
     const incoming = (incomingSessions || []).filter(s => s && s.day);
@@ -4284,7 +4333,7 @@ results && React.createElement("div", { className: "cover-results-clean" },
                     React.createElement("div", { className: "item-main" },
                         React.createElement("div", { className: "item-title" }, t.name || "Unnamed teacher", " ", React.createElement("span", { className: "muted" }, t.nick ? `(${t.nick})` : "")),
                         React.createElement("div", { className: "teacher-meta-row" },
-                            React.createElement("span", { className: "teacher-chip" }, t.position || "No position"),
+                            React.createElement("span", { className: `teacher-chip ${posClass(t.position)}` }, t.position || "No position"),
                             React.createElement("span", { className: "teacher-chip copy-chip", role: "button", tabIndex: "0", onMouseDown: e => e.stopPropagation(), onClick: e => { e.stopPropagation(); copyTeacherContact(t.email, "Email copied"); }, onKeyDown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); copyTeacherContact(t.email, "Email copied"); } } },
                                 "Email: ",
                                 t.email || "-"),
@@ -4320,6 +4369,11 @@ function PlanNewClass({ db, onSave }) { const resultRef = useRef(null);
         return true;
     }
     const selectedDays = [form.day1, form.day2, form.day3].filter(Boolean);
+    function cleanClassRequestSource(source = {}) {
+        const merged = { ...source };
+        const { id, requestToken, assignedTeachers, createdAt, name, ...clean } = merged;
+        return clean;
+    }
     function dayOptions(exclude = []) { return CONFIG.days.filter(d => !exclude.includes(d)); }
     function scrollToResults() { setTimeout(() => resultRef.current && resultRef.current.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }
     function findMatchingClassRequest(merged) {
@@ -4339,28 +4393,27 @@ function PlanNewClass({ db, onSave }) { const resultRef = useRef(null);
             return null;
         return { req: requests[index], index };
     }
-    function run(source = form) {
+    function run(source = form, requestIndex = null) {
         const fromSavedRequest = !!(source && source.id);
-        const merged = { ...form, ...source };
+        const mergedRaw = { ...form, ...source };
+        const merged = cleanClassRequestSource(mergedRaw);
         if (!validateRequired(merged)) {
             setResults(null);
             return;
         }
-        const syncedRequests = fromSavedRequest ? rebuildClassRequestAssignmentsFromClasses(db, source.id) : (db.classRequests || []);
-        if (fromSavedRequest && classRequestsChanged(db.classRequests || [], syncedRequests)) {
-            onSave({ ...db, classRequests: syncedRequests });
-        }
-        const matched = fromSavedRequest ? null : findMatchingClassRequest(merged);
-        const linkedRequestId = fromSavedRequest ? source.id : (matched ? matched.req.id : null);
-        const syncedSource = fromSavedRequest ? (syncedRequests.find(req => req.id === source.id) || source) : null;
-        const linkedSource = fromSavedRequest ? { ...merged, assignedTeachers: (syncedSource && syncedSource.assignedTeachers) || {} } : (matched ? { ...merged, id: matched.req.id, assignedTeachers: matched.req.assignedTeachers || {} } : merged);
+        const syncedRequests = db.classRequests || [];
+        const linkedRequestId = fromSavedRequest ? source.id : null;
+        const linkedRequestIndex = fromSavedRequest && Number.isInteger(requestIndex) ? requestIndex : null;
+        const linkedRequestToken = fromSavedRequest ? (source.requestToken || null) : null;
+        const syncedSource = fromSavedRequest ? (syncedRequests.find((req, idx) => classRequestMatchesIdentity(req, idx, { requestId: source.id, requestIndex: linkedRequestIndex, requestToken: linkedRequestToken })) || source) : null;
+        const linkedSource = fromSavedRequest ? { ...merged, assignedTeachers: (syncedSource && syncedSource.assignedTeachers) || {} } : merged;
         const allRequestDays = requestDays(linkedSource).length ? requestDays(linkedSource) : [merged.day1, merged.day2, merged.day3].filter(Boolean);
         const searchDays = linkedRequestId ? allRequestDays : [merged.day1, merged.day2, merged.day3].filter(Boolean);
         setActiveRequestId(linkedRequestId);
         setForm(merged);
         const days = searchDays;
         if (!merged.subject || !days.length || !merged.centre || !merged.duration) {
-            setResults({ both: [], slotsByDay: {}, days });
+            setResults({ both: [], slotsByDay: {}, days, requestId: linkedRequestId, requestIndex: linkedRequestIndex, requestToken: linkedRequestToken });
             setActiveTab(days.length > 1 ? "all" : "day0");
             setExpandedSlots({});
             scrollToResults();
@@ -4368,12 +4421,12 @@ function PlanNewClass({ db, onSave }) { const resultRef = useRef(null);
         }
         const centre = merged.centre;
         const next = findPlanSlots(db, { ...merged, centre, delivery: centre === "Online" ? "Online" : "Offline", days });
-        setResults({ ...next, days });
+        setResults({ ...next, days, requestId: linkedRequestId, requestIndex: linkedRequestIndex, requestToken: linkedRequestToken });
         setActiveTab(days.length > 1 ? "all" : "day0");
         setExpandedSlots({});
         scrollToResults();
     }
-    function saveRequest() { if (!validateRequired(form)) return; const req = { id: uid("class_req"), ...form, assignedTeachers: {}, name: requestSummary(form, "class"), createdAt: new Date().toISOString() }; onSave({ ...db, classRequests: [req, ...(db.classRequests || [])] }); showCopyNotice("Request saved."); }
+    function saveRequest() { const clean = cleanClassRequestSource(form); if (!validateRequired(clean)) return; const req = { id: uid("class_req"), requestToken: uid("class_token"), ...clean, assignedTeachers: {}, name: requestSummary(clean, "class"), createdAt: new Date().toISOString() }; onSave({ ...db, classRequests: [req, ...(db.classRequests || [])] }); setForm(clean); showCopyNotice("Request saved."); }
     function deleteRequest(target, index) { const targetId = typeof target === "object" ? String(target.id || "") : String(target || ""); let removed = false; const nextRequests = (db.classRequests || []).filter((r, i) => { if (!removed && i === index) { removed = true; return false; } if (!removed && targetId && String(r.id || "") === targetId) { removed = true; return false; } return true; }); onSave({ ...db, classRequests: nextRequests }); if (targetId && activeRequestId === targetId) { setActiveRequestId(null); setResults(null); } }
     function currentDateInputValue() {
         const d = new Date();
@@ -4388,22 +4441,29 @@ function PlanNewClass({ db, onSave }) { const resultRef = useRef(null);
         return (slot.rooms && slot.rooms[0]) || "";
     }
     function openAssignClassModal(slot, teacher) {
-        const requestId = activeRequestId || null;
-        const existingClass = requestId ? findPrimaryClassForClassRequest(db, requestId) : null;
+        const requestId = (results && results.requestId) || null;
+        const requestIndex = (results && Number.isInteger(results.requestIndex)) ? results.requestIndex : null;
+        const requestToken = (results && results.requestToken) || null;
+        const existingClass = (requestId || requestToken || Number.isInteger(requestIndex)) ? findPrimaryClassForClassRequest(db, requestId, requestIndex, requestToken) : null;
+        const sourceRequest = (requestId || requestToken || Number.isInteger(requestIndex)) ? findClassRequestByIdentity(db, requestId, requestIndex, requestToken) : null;
         const startDate = (existingClass && existingClass.startDate) || currentDateInputValue();
         const code = (existingClass && existingClass.code) || dateCodeFromInput(startDate);
         const displayDays = displayDaysForSlot(slot);
-        const sessions = displayDays.map(day => ({ id: uid("session"), day, timeFrom: slot.timeFrom, timeTo: slot.timeTo, room: roomForSlotDay(slot, day), teacherId: teacher.id }));
-        if (!sessions.length) { alert("No session day to assign."); return; }
+        const assignedSessions = displayDays.map(day => ({ id: uid("session"), day, timeFrom: slot.timeFrom, timeTo: slot.timeTo, room: roomForSlotDay(slot, day), teacherId: teacher.id }));
+        const requestDayList = sourceRequest ? requestDays(sourceRequest) : [];
+        const sessions = requestDayList.length ? mergeRequestPlaceholderSessions(getClassSessions(existingClass || {}), assignedSessions, requestDayList) : assignedSessions;
+        if (!assignedSessions.length) { alert("No session day to assign."); return; }
         setAssignDraft({
             requestId,
+            requestIndex,
+            requestToken,
             id: (existingClass && existingClass.id) || uid("class"),
             code,
             name: (existingClass && existingClass.name) || form.subject || "New class",
             type: (existingClass && existingClass.type) || "Group",
             subject: (existingClass && existingClass.subject) || form.subject,
             centre: (existingClass && existingClass.centre) || form.centre,
-            daysPerWeek: ((existingClass && getClassSessions(existingClass).length) || 0) + sessions.length,
+            daysPerWeek: sessions.length,
             sessions,
             days: sessions.map(s => s.day),
             room: sessions[0] ? sessions[0].room : "",
@@ -4449,16 +4509,20 @@ function PlanNewClass({ db, onSave }) { const resultRef = useRef(null);
             return;
         const code = title(assignDraft.code) || dateCodeFromInput(assignDraft.startDate);
         if (!code) { alert("Start date is invalid."); return; }
-        const sessions = (assignDraft.sessions || []).filter(s => s.day && s.timeFrom && s.timeTo).map(s => {
+        const sessions = (assignDraft.sessions || []).filter(s => s.day).map(s => {
             const hasSessionTeacher = Object.prototype.hasOwnProperty.call(s || {}, "teacherId");
-            return { ...s, teacherId: hasSessionTeacher ? (s.teacherId || null) : (assignDraft.teacherId || null) };
+            const hasSchedule = !!(s.timeFrom && s.timeTo);
+            return { ...s, teacherId: hasSchedule ? (hasSessionTeacher ? (s.teacherId || null) : (assignDraft.teacherId || null)) : (hasSessionTeacher ? (s.teacherId || null) : null) };
         });
-        if (!sessions.length) { alert("Class needs at least one valid session."); return; }
-        const requestIdToUpdate = assignDraft.requestId || activeRequestId;
-        const existingClass = (assignDraft.mergeIntoClassId && (db.classes || []).find(c => c.id === assignDraft.mergeIntoClassId)) || (requestIdToUpdate ? findPrimaryClassForClassRequest(db, requestIdToUpdate) : null);
+        const scheduledSessions = sessions.filter(s => s.day && s.timeFrom && s.timeTo);
+        if (!scheduledSessions.length) { alert("Class needs at least one valid scheduled session."); return; }
+        const requestIdToUpdate = assignDraft.requestId || null;
+        const requestIndexToUpdate = Number.isInteger(assignDraft.requestIndex) ? assignDraft.requestIndex : null;
+        const requestTokenToUpdate = assignDraft.requestToken || null;
+        const existingClass = (assignDraft.mergeIntoClassId && (db.classes || []).find(c => c.id === assignDraft.mergeIntoClassId)) || ((requestIdToUpdate || requestTokenToUpdate || Number.isInteger(requestIndexToUpdate)) ? findPrimaryClassForClassRequest(db, requestIdToUpdate, requestIndexToUpdate, requestTokenToUpdate) : null);
         const mergedSessions = existingClass ? mergeClassSessions(getClassSessions(existingClass), sessions) : sessions;
         const startWeekOffset = weekOffsetFromStartDate(assignDraft.startDate);
-        const primarySession = mergedSessions.find(s => s.teacherId) || mergedSessions[0];
+        const primarySession = mergedSessions.find(s => s.teacherId && s.timeFrom && s.timeTo) || mergedSessions.find(s => s.timeFrom && s.timeTo) || mergedSessions[0];
         const clean = {
             ...(existingClass || {}),
             ...assignDraft,
@@ -4475,15 +4539,16 @@ function PlanNewClass({ db, onSave }) { const resultRef = useRef(null);
             status: assignDraft.status || (existingClass && existingClass.status) || "Active",
             startWeekOffset
         };
-        const assignedTeacherName = teacherDisplayNameById(db.teachers || [], sessions[0] && sessions[0].teacherId, assignDraft.teacherName || "Assigned");
-        const sourceBase = (existingClass && existingClass.assignmentSourceBase) || classAssignmentBaseKey(form, requestIdToUpdate);
-        const taggedClean = { ...clean, assignmentSourceBase: sourceBase, sourceRequestId: requestIdToUpdate || null };
+        const firstAssignedSession = scheduledSessions.find(s => s.teacherId) || sessions.find(s => s.teacherId) || sessions[0];
+        const assignedTeacherName = teacherDisplayNameById(db.teachers || [], firstAssignedSession && firstAssignedSession.teacherId, assignDraft.teacherName || "Assigned");
+        const sourceBase = (existingClass && existingClass.assignmentSourceBase) || classAssignmentBaseKey(form, requestTokenToUpdate || requestIdToUpdate || (Number.isInteger(requestIndexToUpdate) ? `idx:${requestIndexToUpdate}` : null));
+        const taggedClean = { ...clean, assignmentSourceBase: sourceBase, sourceRequestId: requestIdToUpdate || null, sourceRequestIndex: Number.isInteger(requestIndexToUpdate) ? requestIndexToUpdate : null, sourceRequestToken: requestTokenToUpdate || null };
         const nextClasses = existingClass
             ? (db.classes || []).map(c => c.id === existingClass.id ? taggedClean : c)
             : [...(db.classes || []).filter(c => !classHasMatchingAssignedSession(c, sourceBase, sessions)), taggedClean];
         const nextDb = { ...db, classes: nextClasses };
         const requestSessions = sessions.map(s => ({ ...s, teacherName: teacherDisplayNameById(db.teachers || [], s.teacherId, "") }));
-        const finalDb = requestIdToUpdate ? { ...nextDb, classRequests: updateClassRequestsAfterAssignment(nextDb.classRequests || [], requestIdToUpdate, requestSessions, assignedTeacherName) } : nextDb;
+        const finalDb = (requestIdToUpdate || requestTokenToUpdate || Number.isInteger(requestIndexToUpdate)) ? { ...nextDb, classRequests: updateClassRequestsAfterAssignment(nextDb.classRequests || [], requestIdToUpdate, requestSessions, assignedTeacherName, requestIndexToUpdate, requestTokenToUpdate) } : nextDb;
         onSave(finalDb);
         setAssignDraft(null);
         showCopyNotice(`${existingClass ? "Updated" : "Assigned"} ${assignedTeacherName || "teacher"} for class ${clean.name || "New class"} (${code}).`);
@@ -4580,7 +4645,7 @@ function PlanNewClass({ db, onSave }) { const resultRef = useRef(null);
                         rooms.length ? React.createElement("div", { className: "teacher-meta-row" }, rooms.map(r => React.createElement("span", { className: "teacher-chip", key: `${day}_${r}` }, r))) : React.createElement("p", { className: "muted" }, "No room available")); }))),
                 React.createElement("div", { className: "slot-detail-block" },
                     React.createElement("div", { className: "slot-detail-title" }, "Teachers"),
-                    teacherCount ? React.createElement("div", { className: "teacher-meta-row" }, slot.teachers.map(t => React.createElement("button", { type: "button", className: "teacher-assign-name", key: t.id, onClick: e => { e.stopPropagation(); openAssignClassModal(slot, t); } },
+                    teacherCount ? React.createElement("div", { className: "teacher-meta-row" }, slot.teachers.map(t => React.createElement("button", { type: "button", className: `teacher-assign-name ${posClass(t.position)}`, key: t.id, onClick: e => { e.stopPropagation(); openAssignClassModal(slot, t); } },
                         t.nick || t.name,
                         " \u00B7 ",
                         t.position))) : React.createElement("p", { className: "muted" }, "No teacher available"))));
@@ -5097,7 +5162,7 @@ function App() {
             React.createElement("nav", { className: "nav" }, tabs.map(t => React.createElement("button", { key: t.id, className: tab === t.id ? "active" : "", onClick: () => setTab(t.id) },
                 React.createElement("span", { className: "icon" }, t.icon),
                 React.createElement("span", { className: "nav-text" }, t.label)))),
-            React.createElement("div", { className: "sidebar-footer" }, "made by Nick and Pete (with love)")),
+            React.createElement("div", { className: "sidebar-footer" }, "made by Nick and Pete (2026)")),
         React.createElement("main", { className: "main" },
             !isCalendarTab && React.createElement("div", { className: "topbar" },
                 React.createElement("div", { className: "page-title" },

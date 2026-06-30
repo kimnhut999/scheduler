@@ -3672,7 +3672,7 @@ function ClassForm({ cls, teachers, rooms, onSave, onClose, settings }) {
     const teacherOptions = (teachers || []).filter(t => String(t.name || t.nick || "").trim());
     const makeSession = (i = 0, base = {}) => {
         const hasSessionTeacher = Object.prototype.hasOwnProperty.call(base || {}, "teacherId");
-        return { id: base.id || uid("session"), day: base.day || "", subject: base.subject || ((cls && cls.subject) || ""), room: base.room || "", teacherId: hasSessionTeacher ? (base.teacherId || "") : ((cls && cls.teacherId) || ""), timeFrom: base.timeFrom || "", timeTo: base.timeTo || "" };
+        return { id: base.id || uid("session"), day: base.day || "", subject: base.subject || "", room: base.room || "", teacherId: hasSessionTeacher ? (base.teacherId || "") : ((cls && cls.teacherId) || ""), timeFrom: base.timeFrom || "", timeTo: base.timeTo || "" };
     };
     const initialSessions = cls ? getClassSessions(cls).map((s, i) => makeSession(i, s)) : [makeSession()];
     const [draft, setDraft] = useState(() => cls ? { ...cls, daysPerWeek: cls.daysPerWeek || initialSessions.length || 1, sessions: initialSessions } : { id: uid("class"), code: "", name: "", type: firstType, subject: firstSubject, centre: firstCentre, daysPerWeek: "", sessions: [makeSession()], teacherId: "", coverTeacherId: "", coverUntil: "", studentList: "", status: firstStatus, notes: "" });
@@ -3692,8 +3692,38 @@ function ClassForm({ cls, teachers, rooms, onSave, onClose, settings }) {
             current.push(makeSession(current.length, { teacherId: d.teacherId || "" }));
         return { ...d, daysPerWeek: safe, sessions: current.slice(0, safe) };
     });
-    const updateSession = (idx, key, value) => setDraft(d => ({ ...d, sessions: (d.sessions || []).map((s, i) => i === idx ? { ...s, [key]: value } : s) }));
+    const updateSession = (idx, key, value) => setDraft(d => ({ ...d, sessions: (d.sessions || []).map((s, i) => {
+        if (i !== idx)
+            return s;
+        const nextSession = { ...s, [key]: value };
+        if (key === "teacherId") {
+            const allowedSubjects = subjectOptionsForTeacher(value);
+            if (value && nextSession.subject && !allowedSubjects.some(x => String(x) === String(nextSession.subject)))
+                nextSession.subject = "";
+        }
+        return nextSession;
+    }) }));
     function teacherLabel(t) { return `${t.name || t.nick}${t.nick && t.name ? ` (${t.nick})` : ""}`; }
+    function subjectOptionsForTeacher(teacherId) {
+        const t = teacherOptions.find(x => x.id === teacherId);
+        const teacherSubjects = (t && Array.isArray(t.subjects)) ? t.subjects.map(x => String(x || "").trim()).filter(Boolean) : [];
+        return teacherId ? teacherSubjects : lists.subjects;
+    }
+    function subjectSelectValue(s) {
+        const value = String((s && s.subject) || "");
+        const options = subjectOptionsForTeacher(s && s.teacherId);
+        if (s && s.teacherId && value && !options.some(x => String(x) === value))
+            return "";
+        return value;
+    }
+    function subjectOptionNodes(s) {
+        const value = subjectSelectValue(s);
+        const options = subjectOptionsForTeacher(s && s.teacherId);
+        const showLegacy = !(s && s.teacherId) && value && !options.some(x => String(x) === value);
+        return React.createElement(React.Fragment, null,
+            showLegacy && React.createElement("option", { value }, value),
+            options.map(x => React.createElement("option", { key: x, value: x }, x)));
+    }
     function teacherOptionsForSession(s) {
         const centre = draft.centre || "";
         const day = s.day || "";
@@ -3701,7 +3731,7 @@ function ClassForm({ cls, teachers, rooms, onSave, onClose, settings }) {
             
             if (centre && !teacherCanTravel(t, centre))
                 return false;
-            const sessionSubject = s.subject || draft.subject || "";
+            const sessionSubject = s.subject || "";
             if (sessionSubject && !teacherMatchesSubject(t, sessionSubject))
                 return false;
             if (day && s.timeFrom && s.timeTo && isTeacherBusy(t, localDb.read().classes || [], day, s.timeFrom, s.timeTo, draft.id))
@@ -3768,9 +3798,9 @@ function ClassForm({ cls, teachers, rooms, onSave, onClose, settings }) {
                             teacherOptionsForSession(s).map(t => React.createElement("option", { key: t.id, value: t.id }, teacherLabel(t))))),
                     React.createElement("label", null,
                         "Subject",
-                        React.createElement("select", { value: s.subject || draft.subject || "", onChange: e => updateSession(i, "subject", e.target.value) },
+                        React.createElement("select", { value: subjectSelectValue(s), onChange: e => updateSession(i, "subject", e.target.value) },
                             React.createElement("option", { value: "" }, "Select..."),
-                            React.createElement(LegacyOptions, { items: lists.subjects, value: s.subject || draft.subject }))),
+                            subjectOptionNodes(s))),
                     React.createElement("label", null,
                         "Room",
                         React.createElement("select", { value: s.room || "", onChange: e => updateSession(i, "room", e.target.value) },
@@ -4562,8 +4592,42 @@ function PlanNewClass({ db, onSave }) { const resultRef = useRef(null);
             return next;
         });
     }
+    function assignTeacherOptions() {
+        return (db.teachers || []).filter(t => String(t.name || t.nick || "").trim());
+    }
+    function assignSubjectOptionsForTeacher(teacherId) {
+        const t = assignTeacherOptions().find(x => x.id === teacherId);
+        const teacherSubjects = (t && Array.isArray(t.subjects)) ? t.subjects.map(x => String(x || "").trim()).filter(Boolean) : [];
+        return teacherId ? teacherSubjects : lists.subjects;
+    }
+    function assignSubjectSelectValue(s) {
+        const value = String((s && s.subject) || (assignDraft && assignDraft.subject) || "");
+        const options = assignSubjectOptionsForTeacher(s && s.teacherId);
+        if (s && s.teacherId && value && !options.some(x => String(x) === value))
+            return "";
+        return value;
+    }
+    function assignSubjectOptionNodes(s) {
+        const value = assignSubjectSelectValue(s);
+        const options = assignSubjectOptionsForTeacher(s && s.teacherId);
+        const showLegacy = !(s && s.teacherId) && value && !options.some(x => String(x) === value);
+        return React.createElement(React.Fragment, null,
+            showLegacy && React.createElement("option", { value }, value),
+            options.map(x => React.createElement("option", { key: x, value: x }, x)));
+    }
     function updateAssignSession(idx, key, value) {
-        setAssignDraft(d => ({ ...d, sessions: (d.sessions || []).map((s, i) => i === idx ? { ...s, [key]: value } : s) }));
+        setAssignDraft(d => ({ ...d, sessions: (d.sessions || []).map((s, i) => {
+            if (i !== idx)
+                return s;
+            const nextSession = { ...s, [key]: value };
+            if (key === "teacherId") {
+                const currentSubject = nextSession.subject || (d && d.subject) || "";
+                const allowedSubjects = assignSubjectOptionsForTeacher(value);
+                if (value && currentSubject && !allowedSubjects.some(x => String(x) === String(currentSubject)))
+                    nextSession.subject = "";
+            }
+            return nextSession;
+        }) }));
     }
     function pruneAssignedTeacherFromResults(teacherId) {
         const filterSlots = (items = []) => (items || []).map(s => ({ ...s, teachers: (s.teachers || []).filter(t => t.id !== teacherId) })).filter(s => (s.teachers || []).length);
@@ -4789,8 +4853,8 @@ results && React.createElement("div", null,
                     React.createElement("div", { className: "schedule-stack" }, (assignDraft.sessions || []).map((s, i) => React.createElement("div", { className: "schedule-strip", key: s.id || i },
                         React.createElement("div", { className: "schedule-strip-fields assign-schedule-fields" },
                             React.createElement("label", null, "Day", React.createElement("select", { value: s.day || "", onChange: e => updateAssignSession(i, "day", e.target.value) }, React.createElement("option", { value: "" }, "Day..."), CONFIG.days.map(d => React.createElement("option", { key: d }, d)))),
-                            React.createElement("label", null, "Teacher", React.createElement("select", { value: s.teacherId || "", onChange: e => updateAssignSession(i, "teacherId", e.target.value) }, React.createElement("option", { value: "" }, "Not assigned"), db.teachers.filter(t => String(t.name || t.nick || "").trim()).map(t => React.createElement("option", { key: t.id, value: t.id }, t.name || t.nick, " ", t.nick && t.name ? `(${t.nick})` : "")))),
-                            React.createElement("label", null, "Subject", React.createElement("select", { value: s.subject || assignDraft.subject || "", onChange: e => updateAssignSession(i, "subject", e.target.value) }, React.createElement("option", { value: "" }, "Select..."), React.createElement(LegacyOptions, { items: lists.subjects, value: s.subject || assignDraft.subject }))),
+                            React.createElement("label", null, "Teacher", React.createElement("select", { value: s.teacherId || "", onChange: e => updateAssignSession(i, "teacherId", e.target.value) }, React.createElement("option", { value: "" }, "Not assigned"), assignTeacherOptions().map(t => React.createElement("option", { key: t.id, value: t.id }, t.name || t.nick, " ", t.nick && t.name ? `(${t.nick})` : "")))),
+                            React.createElement("label", null, "Subject", React.createElement("select", { value: assignSubjectSelectValue(s), onChange: e => updateAssignSession(i, "subject", e.target.value) }, React.createElement("option", { value: "" }, "Select..."), assignSubjectOptionNodes(s))),
                             React.createElement("label", null, "Room", React.createElement("select", { value: s.room || "", onChange: e => updateAssignSession(i, "room", e.target.value) }, React.createElement("option", { value: "" }, "Select..."), React.createElement(LegacyOptions, { items: ((db.rooms || {})[assignDraft.centre] || []), value: s.room }))),
                             React.createElement("label", null, "Start", React.createElement(TimeSelect, { value: s.timeFrom, onChange: v => updateAssignSession(i, "timeFrom", v) })),
                             React.createElement("label", null, "End", React.createElement(TimeSelect, { value: s.timeTo, onChange: v => updateAssignSession(i, "timeTo", v) }))))))),
